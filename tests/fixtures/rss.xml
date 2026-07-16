@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Vision Lab</title>
+    <link>https://example.org/blog</link>
+    <description>Computer vision notes</description>
+    <item>
+      <guid>vision-lab-world-models</guid>
+      <title>Building World Models for Video Understanding</title>
+      <link>https://example.org/blog/world-models</link>
+      <description><![CDATA[<p>An engineering deep dive into visual tokenization and video prediction.</p>]]></description>
+      <author>lab@example.org (Vision Lab)</author>
+      <category>video understanding</category>
+      <pubDate>Fri, 10 Jul 2026 08:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>

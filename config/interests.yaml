@@ -1,0 +1,32 @@
+high_priority:
+  - computer vision
+  - 3D vision
+  - cell tracking
+  - microscopy
+  - biological image analysis
+  - medical image segmentation
+  - instance segmentation
+  - small object detection
+  - multi-object tracking
+  - spatiotemporal modeling
+medium_priority:
+  - vision foundation models
+  - self-supervised learning
+  - open-vocabulary detection
+  - synthetic data
+  - diffusion for perception
+exploration:
+  - video understanding
+  - world models
+  - neural rendering
+  - visual tokenization
+exclude_keywords:
+  - survey only
+  - withdrawn
+followed_authors: []
+followed_venues:
+  - CVPR
+  - ICCV
+  - ECCV
+  - MICCAI
+daily_max_recommendations: 15

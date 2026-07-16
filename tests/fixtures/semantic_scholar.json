@@ -1,0 +1,11 @@
+{
+  "paperId": "semantic-paper-123",
+  "title": "Foundation Models for Microscopy Cell Tracking",
+  "authors": [{"name": "Ada Vision"}, {"name": "Lin Bio"}],
+  "citationCount": 17,
+  "venue": "MICCAI",
+  "publicationDate": "2026-07-10",
+  "externalIds": {"ArXiv": "2607.01234", "DOI": "10.1000/example.1234"},
+  "openAccessPdf": {"url": "https://example.org/paper.pdf", "status": "GREEN"},
+  "url": "https://www.semanticscholar.org/paper/semantic-paper-123"
+}

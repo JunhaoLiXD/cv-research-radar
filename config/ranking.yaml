@@ -1,0 +1,10 @@
+weights:
+  relevance: 0.35
+  novelty: 0.25
+  evidence: 0.15
+  reproducibility: 0.15
+  trend: 0.05
+  exploration: 0.05
+fuzzy_title_threshold: 94.0
+minimum_rule_score: 15.0
+topic_daily_cap: 0.4

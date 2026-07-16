@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Imaging Lab</title>
+  <entry>
+    <id>tag:example.org,2026:microscopy</id>
+    <title>Practical Biological Image Analysis</title>
+    <link href="https://example.org/atom/microscopy" />
+    <updated>2026-07-10T07:00:00Z</updated>
+    <summary>Deploying microscopy segmentation systems.</summary>
+    <author><name>Imaging Lab</name></author>
+    <category term="microscopy" />
+  </entry>
+</feed>

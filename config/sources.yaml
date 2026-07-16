@@ -1,0 +1,18 @@
+arxiv:
+  enabled: true
+  categories:
+    - cs.CV
+    - eess.IV
+  search_keywords: []
+  max_results: 100
+semantic_scholar:
+  enabled: true
+feeds:
+  - name: Berkeley AI Research
+    url: https://bair.berkeley.edu/blog/feed.xml
+    item_type: blog
+    enabled: true
+  - name: Google Research
+    url: https://research.google/blog/rss/
+    item_type: blog
+    enabled: true
