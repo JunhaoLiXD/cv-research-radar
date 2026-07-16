@@ -1,46 +1,75 @@
 # cv-research-radar
 
-`cv-research-radar` 是一个轻量级 Python 3.12 项目，每天自动收集、筛选、分析并汇总计算机视觉领域的新论文与研究博客，并生成适合阅读的中文 PDF 日报。第一版支持 arXiv、Semantic Scholar 元数据补充，以及标准 RSS/Atom Feed；不做网页爬虫、浏览器自动化或完整论文 PDF 分析。
+`cv-research-radar` is a lightweight Python 3.12 project that collects, filters, analyzes, ranks, and summarizes new computer-vision papers and research posts. It produces private Chinese-language daily reports in both PDF and Markdown while preserving the original English titles.
 
-## 工作流程与架构
+The current version supports:
+
+- arXiv API queries for `cs.CV`, `eess.IV`, additional categories, and configurable keywords;
+- Semantic Scholar metadata enrichment by title, arXiv ID, or DOI;
+- standard RSS and Atom feeds for research blogs and labs;
+- stable-ID, normalized-title, and RapidFuzz title deduplication;
+- rule-based filtering, weighted ranking, exploration coverage, and a 40% per-topic cap;
+- optional OpenAI Responses API analysis with Structured Outputs;
+- a no-API ChatGPT Pro/Codex subscription review workflow;
+- Chinese Markdown and PDF reports with idempotent JSONL state.
+
+The first version intentionally does not include web scraping, browser automation, full-paper PDF analysis, or embedding API calls.
+
+## Architecture
 
 ```mermaid
 flowchart LR
     A["arXiv API"] --> F["Fetch + Normalize"]
     B["Semantic Scholar API"] --> F
     C["RSS / Atom"] --> F
-    F --> D["Stable ID / Title / Fuzzy Deduplicate"]
+    F --> D["Stable ID / Exact Title / Fuzzy Deduplication"]
     D --> R["Rule Filter + Keyword Relevance"]
-    R --> L["Optional OpenAI Responses API"]
-    L --> K["Weighted Rank + 40% Topic Cap"]
-    K --> M["Chinese PDF + Markdown Report"]
+    R --> X{"Analysis mode"}
+    X -->|"OpenAI API configured"| L["Responses API + Structured Outputs"]
+    X -->|"Codex subscription"| Q["Prepare / Review / Finalize"]
+    X -->|"No LLM"| W["Keyword fallback"]
+    L --> K["Weighted Rank + Topic Cap"]
+    Q --> K
+    W --> K
+    K --> M["Chinese PDF + Markdown"]
     M --> S["Idempotent JSONL State"]
 ```
 
-核心原则：任何单个来源或单个补充请求失败，都只记录警告并继续其他来源、关键词回退、日报生成与状态保存。
+Each source is isolated at its boundary. If one API, feed, or enrichment request fails, the pipeline logs the error and continues with the remaining sources, fallback analysis, report generation, and state persistence.
 
-## 安装
+## Installation
 
 ```bash
-git clone <your-repository-url>
+git clone https://github.com/JunhaoLiXD/cv-research-radar.git
 cd cv-research-radar
 python -m venv .venv
-# Windows: .venv\Scripts\activate
-# macOS/Linux: source .venv/bin/activate
+
+# Windows PowerShell
+.venv\Scripts\Activate.ps1
+
+# macOS/Linux
+source .venv/bin/activate
+
 python -m pip install -e ".[dev]"
 ```
 
-密钥只通过环境变量提供。可复制 `.env.example` 了解变量名，但程序不会自动要求 `.env` 存在：
+Secrets are read only from environment variables. `.env.example` documents the available names, but the application does not require a `.env` file.
 
 ```bash
-export OPENAI_API_KEY="..."                 # 可选
-export OPENAI_MODEL="your-structured-model" # 配置 Key 时同时设置
-export SEMANTIC_SCHOLAR_API_KEY="..."       # 可选
+# Optional: enables Responses API analysis.
+export OPENAI_API_KEY="..."
+export OPENAI_MODEL="a-structured-outputs-capable-model"
+
+# Optional: higher Semantic Scholar rate limits.
+export SEMANTIC_SCHOLAR_API_KEY="..."
+
+# Optional: used when --date is omitted. This is the default.
+export RADAR_TIMEZONE="America/New_York"
 ```
 
-PowerShell 对应写法为 `$env:OPENAI_API_KEY="..."`。不要把真实值写入 `.env.example`、YAML 或源码。
+In PowerShell, use syntax such as `$env:SEMANTIC_SCHOLAR_API_KEY="..."`. Never place real values in `.env.example`, YAML files, source code, fixtures, logs, or reports.
 
-## 本地运行
+## Command-line usage
 
 ```bash
 python -m cv_radar validate-config
@@ -50,58 +79,93 @@ python -m cv_radar run --date 2026-07-10
 python -m cv_radar backfill --days 7
 ```
 
-无 `OPENAI_API_KEY` 时程序完全可运行，使用确定性的关键词和元数据评分，并在日报中标注“未执行 LLM 分析”。无 Semantic Scholar Key 时仍尝试匿名 API，遇到速率限制则保留 arXiv 原始记录。
+When `OPENAI_API_KEY` is absent, `run` remains fully operational. It uses deterministic keyword and metadata scoring and clearly marks the report as not LLM-analyzed. When a Semantic Scholar key is absent, anonymous enrichment is attempted; rate limits or failures leave the original arXiv record intact.
 
-### 使用 ChatGPT Pro/Codex 订阅审阅（不调用 OpenAI API）
+## No-API ChatGPT Pro/Codex workflow
 
-如果只有 ChatGPT Pro/Codex 订阅、不希望产生 API token 账单，使用两阶段文件交换流程：
+Use this mode when you have a ChatGPT Pro/Codex subscription and do not want OpenAI API token charges. It uses a strict two-stage file exchange:
 
 ```bash
-# 1. 免费抓取、去重、规则筛选，并导出最多 daily_max_recommendations 个候选
+# 1. Fetch, normalize, deduplicate, filter, and export review candidates.
 python -m cv_radar prepare-review --date 2026-07-10
 
-# 2. 让 ChatGPT/Codex 按 review/2026-07-10-prompt.md 分析候选，
-#    并把严格 JSON 写到 review/2026-07-10-analysis.json
+# 2. Ask Codex to follow review/2026-07-10-prompt.md and write the strict
+#    JSON result to review/2026-07-10-analysis.json.
 
-# 3. 严格校验分析、重新排名，并生成最终 Markdown/PDF
+# 3. Validate the analysis, rerank candidates, and generate Markdown/PDF.
 python -m cv_radar finalize-review --date 2026-07-10
 ```
 
-第一步生成：
+`prepare-review` creates:
 
-- `review/YYYY-MM-DD-candidates.json`：候选、稳定指纹、规则命中和关键词回退分析；
-- `review/YYYY-MM-DD-prompt.md`：安全边界、分析要求和严格 JSON Schema；
-- 预期的 `review/YYYY-MM-DD-analysis.json`：由 ChatGPT/Codex 订阅交互写入。
+- `review/YYYY-MM-DD-candidates.json`: normalized candidates, stable fingerprints, rule matches, and fallback analysis;
+- `review/YYYY-MM-DD-prompt.md`: safety boundaries, analysis instructions, and the strict JSON Schema;
+- an expected output path at `review/YYYY-MM-DD-analysis.json`.
 
-`prepare-review` 和 `finalize-review` 都不会调用 OpenAI API，即使当前环境意外设置了 `OPENAI_API_KEY`。`finalize-review` 要求每个候选指纹恰好出现一次；缺失、重复、额外候选、日期不一致或额外 JSON 字段都会拒绝生成报告。重复导入相同分析是幂等的。
+Both `prepare-review` and `finalize-review` hard-disable the API analyzer even if `OPENAI_API_KEY` is present. `finalize-review` rejects missing, duplicate, unexpected, wrong-date, or schema-invalid analyses. Reimporting the same valid analysis is idempotent.
 
-仓库内的 `prompts/daily_codex_review.md` 是适合 Codex Scheduled Task 的固定执行说明。针对本地项目的定时任务必须在电脑开机且 ChatGPT/Codex 桌面应用保持运行时执行，并预先允许该项目访问 arXiv、Semantic Scholar 和配置的 RSS/Atom 域名。推荐使用 Local 模式，使私有 PDF 保留在主项目的 `reports/` 中。
+Each reviewed item contains a Chinese overview, concrete highlights, a novelty or noteworthy-aspect explanation, the core idea, why it matters, limitations, connections to configured research interests, code availability, and a recommended action: intensive reading, skim, watch, or skip.
 
-CLI 在省略 `--date` 时读取 `RADAR_TIMEZONE`，默认使用 `America/New_York`；可在本地环境中覆盖为其他 IANA 时区。定时任务因此可以使用固定的 `python -m cv_radar prepare-review` 与 `python -m cv_radar finalize-review` 命令。
+For the simplest interactive workflow, open the repository in Codex and ask:
 
-项目级 `.codex/rules/cv-radar.rules` 只允许 `prepare-review` 抓取入口在无人值守任务中访问网络，不会放行其他 Python、`cv_radar run` 或 Git 命令。首次添加或修改规则后重启一次 ChatGPT/Codex 桌面应用，使项目规则生效；项目需要处于受信任状态。
+```text
+Follow prompts/daily_codex_review.md and generate today's research report.
+```
 
-离线验收不会发起任何网络请求：
+The durable task instructions are stored in `prompts/daily_codex_review.md`.
+
+## Local Codex scheduled task
+
+A local Codex Scheduled task can run the subscription workflow every day without an OpenAI API key. The current project is designed for a local task at 20:30 in `America/New_York`:
+
+1. Keep the computer powered on and the ChatGPT/Codex desktop app running at the scheduled time.
+2. Run the task against the local project, not an isolated worktree, so private reports are written to the main checkout.
+3. Use `prompts/daily_codex_review.md` as the durable task instruction.
+4. Restart the desktop app after adding or changing project rules.
+
+When `--date` is omitted, the CLI reads `RADAR_TIMEZONE`, which defaults to `America/New_York`. This lets the scheduled task use fixed commands:
+
+```bash
+python -m cv_radar prepare-review
+python -m cv_radar finalize-review
+```
+
+The project-level `.codex/rules/cv-radar.rules` grants unattended network access only to the `prepare-review` entry point. It does not allow other Python commands, `cv_radar run`, or Git commands outside the normal sandbox policy. The repository must be trusted for project-local Codex rules to load.
+
+Local Scheduled tasks use the ChatGPT/Codex subscription and count against the plan's usage limits; they do not create OpenAI API token charges. A missed run is not guaranteed to catch up automatically if the computer or desktop app was offline.
+
+## Reports and state
+
+Successful runs produce:
+
+```text
+reports/YYYY-MM-DD.md
+reports/YYYY-MM-DD.pdf
+reports/latest.md
+reports/latest.pdf
+state/seen_items.jsonl
+state/runs.jsonl
+```
+
+Markdown and PDF reports contain the same recommendations. Repeating a run for the same date and input overwrites the report deterministically and upserts state by stable keys instead of appending duplicate items or run records.
+
+`reports/` and `review/` are ignored by Git. Private reports, candidate bundles, and subscription-generated analyses stay on the local machine and are never committed or published by the provided workflow.
+
+## Offline end-to-end verification
+
+The fixture workflow does not make network requests:
 
 ```bash
 python -m cv_radar run --date 2026-07-10 --fixture-dir tests/fixtures
 ```
 
-输出包括：
+All external API unit tests use fixtures, mocks, or `httpx.MockTransport`.
 
-- `reports/YYYY-MM-DD.pdf` 与 `reports/latest.pdf`
-- `reports/YYYY-MM-DD.md` 与 `reports/latest.md`
-- `state/seen_items.jsonl` 与 `state/runs.jsonl`
+## Configuration
 
-每条推荐都会展示中文概览、亮点列表、新颖或值得注意之处、核心想法、局限性和与当前研究方向的联系。配置 OpenAI 后会基于标题和摘要生成更具体的中文分析；无 Key 时仍会提供保守的中文规则总结，并明确标注回退模式。
+### Research interests
 
-相同日期和相同输入重复执行时，日报覆盖为相同内容，状态按稳定键 upsert，不增加重复项目或运行记录。
-
-`reports/` 与 `review/` 默认加入 `.gitignore`。日报、候选材料和订阅生成的分析只保存在运行环境本地，不会被提交或发布到 GitHub。
-
-## 配置示例
-
-`config/interests.yaml`：
+`config/interests.yaml` controls priority areas, exclusions, followed authors and venues, exploration topics, and the daily recommendation limit:
 
 ```yaml
 high_priority:
@@ -118,7 +182,11 @@ followed_venues: [CVPR, ICCV, ECCV, MICCAI]
 daily_max_recommendations: 15
 ```
 
-`config/sources.yaml` 中可扩展 arXiv 分类、查询词与 Feed：
+Put the most directly relevant phrases in `high_priority`, method families in `medium_priority`, and cross-domain signals in `exploration`. Matching is case-insensitive but literal, so include common abbreviations and full names when useful. Exclusions take precedence over positive matches.
+
+### Sources
+
+Add arXiv categories, search terms, and RSS/Atom feeds in `config/sources.yaml`:
 
 ```yaml
 arxiv:
@@ -126,8 +194,10 @@ arxiv:
   categories: [cs.CV, eess.IV]
   search_keywords: [microscopy]
   max_results: 100
+
 semantic_scholar:
   enabled: true
+
 feeds:
   - name: Example Vision Lab
     url: https://example.org/feed.xml
@@ -135,63 +205,78 @@ feeds:
     enabled: true
 ```
 
-`config/ranking.yaml` 默认权重严格合计为 1：relevance 35%、novelty 25%、evidence 15%、reproducibility 15%、trend 5%、exploration 5%。`minimum_rule_score` 控制进入 LLM 的最低规则分，`fuzzy_title_threshold` 控制模糊去重，`topic_daily_cap` 默认 0.4。
+An invalid or unavailable feed does not stop other feeds or report generation.
 
-## 如何添加新信息源
+### Ranking
 
-1. 在 `src/cv_radar/sources/` 新增适配器，将响应标准化为 `ResearchItem`。
-2. 复用 `ResilientHttpClient`，不要创建无超时、无重试或无限重试的请求。
-3. 在来源或单条记录边界捕获错误，让其他来源继续。
-4. 在 `tests/fixtures/` 添加最小响应样本，并用 mock 覆盖成功、失败和降级行为。
-5. 如需配置字段，同步更新 `src/cv_radar/config.py`、默认 YAML 和配置测试。
+The default `config/ranking.yaml` weights sum to exactly 1.0:
 
-未来的 embedding 去重接口已在 `EmbeddingDuplicateDetector` 中保留，第一版不会调用任何 embedding API。
+| Signal | Weight |
+| --- | ---: |
+| Relevance | 35% |
+| Novelty | 25% |
+| Evidence | 15% |
+| Reproducibility | 15% |
+| Trend | 5% |
+| Exploration | 5% |
 
-## 调整兴趣和权重
+`minimum_rule_score` controls which candidates reach LLM analysis, `fuzzy_title_threshold` controls fuzzy-title deduplication, and `topic_daily_cap` defaults to `0.4`. The final selector attempts to include highly relevant work, novel but immature work, engineering or blog content, and exploratory cross-domain work while keeping one topic below 40% of the target slots. It may return fewer items when the available topic mix is too narrow.
 
-- 把最直接相关的短语放入 `high_priority`，方法类主题放入 `medium_priority`，跨领域线索放入 `exploration`。
-- 短语匹配忽略大小写，但不会做语义扩展；可同时配置常见缩写与全称。
-- 排除词优先于加分规则。
-- 修改排名权重时必须保持总和为 1；运行 `python -m cv_radar validate-config` 立即检查。
-- 日报会优先覆盖高相关、新颖但证据较弱、博客/工程文章和探索方向，并限制单主题最多占目标推荐槽位的 40%。当来源本身主题不足时，日报可能少于每日上限。
+Run `python -m cv_radar validate-config` after configuration changes.
 
-## GitHub Secrets 与 Actions
+## Adding a source
 
-项目包含 `.github/workflows/daily-radar.yml`，每天 `00:00 UTC`（`Asia/Singapore` 08:00）运行，也支持手动 `workflow_dispatch`。工作流使用 Python 3.12，先测试再生成日报；报告保留在运行环境且不提交，只暂存和提交 `state/` 的实际变化，权限仅为 `contents: write`。
+1. Add an adapter under `src/cv_radar/sources/` that returns `ResearchItem` objects.
+2. Reuse `ResilientHttpClient` so every request has an explicit timeout, finite retries, exponential backoff, error logging, and a request interval.
+3. Catch failures at the source or item-enrichment boundary so other sources continue.
+4. Add a minimal realistic fixture and mock both success and failure behavior.
+5. Update the strict configuration model, default YAML, and tests if new configuration fields are required.
 
-连接 GitHub 仓库后：
+`EmbeddingDuplicateDetector` reserves a clear future interface, but the current version never calls an embedding API.
 
-1. 在 **Settings → Secrets and variables → Actions → Secrets** 添加可选的 `OPENAI_API_KEY` 和 `SEMANTIC_SCHOLAR_API_KEY`。
-2. 在 **Variables** 添加 `OPENAI_MODEL`；应选择支持 Structured Outputs 的模型。
-3. 在 **Actions** 页面启用工作流，并先用 **Run workflow** 手动验证。
-4. 确认仓库/分支允许 GitHub Actions 创建提交；密钥不会出现在命令参数或日志输出中。
+## GitHub Actions
 
-## 测试
+`.github/workflows/daily-radar.yml` supports manual dispatch and runs every day at `00:00 UTC`, equivalent to `08:00 Asia/Singapore`. It uses Python 3.12, runs the test suite, generates a report, and commits only changed `state/` files. Ignored reports are neither committed nor uploaded.
+
+The GitHub-hosted workflow cannot use a ChatGPT Pro/Codex subscription. It either uses optional API credentials or the deterministic keyword fallback.
+
+Repository setup:
+
+1. Under **Settings → Secrets and variables → Actions → Secrets**, add optional `OPENAI_API_KEY` and `SEMANTIC_SCHOLAR_API_KEY` values.
+2. Under **Variables**, add `OPENAI_MODEL` if the OpenAI API analyzer is enabled. Choose a model that supports Structured Outputs.
+3. Enable Actions and run **Run workflow** once for verification.
+4. Ensure the selected branch permits the workflow to push state updates.
+
+The workflow has only `contents: write` permission and does not print secrets.
+
+## Testing
 
 ```bash
 python -m pytest
 python -m compileall -q src
+python -m cv_radar validate-config
 ```
 
-测试全部使用 fixture 或 `httpx.MockTransport`，不会连接真实外部 API。
+The test suite covers arXiv Atom parsing, RSS/Atom parsing, Semantic Scholar response parsing, title normalization, stable-ID and fuzzy-title deduplication, configuration loading, ranking, Markdown/PDF generation, API failure fallback, subscription review validation, and same-day idempotency.
 
-## 当前限制
+## Current limitations
 
-- 未实现网页爬虫、浏览器自动化、GitHub 项目搜索、完整 PDF 分析或 embedding 去重。
-- RSS/Atom 缺失发布时间时只能使用抓取时刻，可能影响指定日期筛选。
-- 关键词匹配是字面规则，不等同于语义召回；LLM 分析也只看到标题、摘要和元数据。
-- Semantic Scholar 匿名额度较低；补充失败时 citation、venue 或开放 PDF 字段可能为空。
-- arXiv 日期按 API 的 UTC `submittedDate` 查询；跨时区边界可能与本地“当天”略有差异。
-- 主题 40% 上限按目标推荐槽位执行；主题不足时宁可减少推荐数。
+- No web scraping, browser automation, GitHub repository discovery, full-paper PDF analysis, or embedding deduplication.
+- Feeds without publication timestamps use the fetch time, which can affect date filtering.
+- Keyword matching is literal rather than semantic; LLM analysis sees only titles, abstracts, and metadata.
+- Anonymous Semantic Scholar limits are low, so citation, venue, or open-access PDF fields may remain empty after enrichment failures.
+- arXiv date queries use UTC `submittedDate`, which can differ slightly from a local calendar day near timezone boundaries.
+- The 40% topic cap is applied to target recommendation slots and can reduce the final item count.
+- Local Codex Scheduled tasks require the computer and desktop app to remain running.
 
-## 后续路线
+## Roadmap
 
-1. 增加 GitHub/API 代码项目来源和数据集来源。
-2. 引入可选 embedding 去重与主题聚类，但保留本地降级路径。
-3. 增加摘要级引用核查、趋势时间窗和更细的会议/作者画像。
-4. 在明确授权后增加 PDF 元数据与章节级提取，而非无边界抓取。
-5. 增加历史看板、邮件/消息推送和人工反馈闭环。
+1. Add GitHub/API-based repository and dataset sources.
+2. Add optional local or API embedding deduplication and topic clustering while preserving the no-API fallback.
+3. Add abstract-level claim checking, rolling trend windows, and richer venue/author profiles.
+4. Add bounded PDF metadata or section extraction only with explicit authorization.
+5. Add a historical dashboard, notifications, and a human-feedback loop.
 
-## OpenAI API 实现依据
+## OpenAI API implementation note
 
-LLM 层使用 OpenAI Python SDK 的 Responses API Pydantic 解析接口；Structured Outputs 会约束模型输出匹配所提供的 JSON Schema。参见 [OpenAI Structured Outputs 官方指南](https://developers.openai.com/api/docs/guides/structured-outputs)。模型名只从 `OPENAI_MODEL` 读取，不在源码中设置分散默认值。
+The optional LLM layer uses the OpenAI Python SDK Responses API with Pydantic Structured Outputs. The model name is read only from `OPENAI_MODEL`; it is not duplicated in source files. See the official [Structured Outputs guide](https://developers.openai.com/api/docs/guides/structured-outputs).
