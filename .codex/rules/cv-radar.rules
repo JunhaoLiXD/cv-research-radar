@@ -1,0 +1,13 @@
+# Allow only the radar's candidate-fetch command to use network access during
+# unattended local scheduled tasks. Other cv_radar and Python commands remain
+# governed by the normal sandbox policy.
+prefix_rule(
+    pattern = ["python", "-m", "cv_radar", "prepare-review"],
+    decision = "allow",
+    justification = "Fetch from the configured arXiv, Semantic Scholar, and RSS/Atom sources for the private daily radar.",
+    match = ["python -m cv_radar prepare-review"],
+    not_match = [
+        "python -m cv_radar run",
+        "python -m cv_radar finalize-review",
+    ],
+)

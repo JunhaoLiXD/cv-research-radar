@@ -14,3 +14,6 @@ build/
 
 # Generated research reports are private and must never be published.
 reports/
+
+# Candidate bundles and subscription-generated analyses are private.
+review/

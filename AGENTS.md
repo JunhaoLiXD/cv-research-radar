@@ -8,6 +8,7 @@
 - 保持同步、轻量实现；第一版不要引入任务队列、数据库、网页爬虫或浏览器框架。
 - PDF 和 Markdown 两种报告统一写入 `reports/`，使用相同日期文件名。
 - `reports/` 包含私人研究日报，必须保持在 `.gitignore` 中，禁止暂存、提交或发布。
+- `review/` 包含候选摘要与订阅生成的分析，同样属于私人数据，必须保持忽略且不得发布。
 - 报告使用中文，原始英文标题不得翻译或改写；每条推荐必须包含中文概览、亮点和新颖性说明。
 
 ## 常用命令
@@ -19,6 +20,8 @@ python -m cv_radar validate-config
 python -m cv_radar list-sources
 python -m cv_radar run
 python -m cv_radar run --date 2026-07-10 --fixture-dir tests/fixtures
+python -m cv_radar prepare-review --date 2026-07-10 --fixture-dir tests/fixtures
+python -m cv_radar finalize-review --date 2026-07-10
 ```
 
 ## 测试要求
@@ -40,6 +43,7 @@ python -m cv_radar run --date 2026-07-10 --fixture-dir tests/fixtures
 
 - 密钥只从环境变量或 GitHub Secrets 读取，绝不写入代码、YAML、fixture、日志或报告。
 - `.env` 必须保持忽略，只提交无值的 `.env.example`。
+- 无 API 订阅审阅必须通过 `prepare-review` / `finalize-review` 交换文件；后台任务不得读取或调用 `OPENAI_API_KEY`。
 - 不执行不受控网页抓取，不下载或分析完整 PDF。
 - 新增外部请求前先确认服务条款、速率限制和可接受的 User-Agent。
 

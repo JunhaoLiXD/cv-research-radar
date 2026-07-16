@@ -52,6 +52,35 @@ python -m cv_radar backfill --days 7
 
 无 `OPENAI_API_KEY` 时程序完全可运行，使用确定性的关键词和元数据评分，并在日报中标注“未执行 LLM 分析”。无 Semantic Scholar Key 时仍尝试匿名 API，遇到速率限制则保留 arXiv 原始记录。
 
+### 使用 ChatGPT Pro/Codex 订阅审阅（不调用 OpenAI API）
+
+如果只有 ChatGPT Pro/Codex 订阅、不希望产生 API token 账单，使用两阶段文件交换流程：
+
+```bash
+# 1. 免费抓取、去重、规则筛选，并导出最多 daily_max_recommendations 个候选
+python -m cv_radar prepare-review --date 2026-07-10
+
+# 2. 让 ChatGPT/Codex 按 review/2026-07-10-prompt.md 分析候选，
+#    并把严格 JSON 写到 review/2026-07-10-analysis.json
+
+# 3. 严格校验分析、重新排名，并生成最终 Markdown/PDF
+python -m cv_radar finalize-review --date 2026-07-10
+```
+
+第一步生成：
+
+- `review/YYYY-MM-DD-candidates.json`：候选、稳定指纹、规则命中和关键词回退分析；
+- `review/YYYY-MM-DD-prompt.md`：安全边界、分析要求和严格 JSON Schema；
+- 预期的 `review/YYYY-MM-DD-analysis.json`：由 ChatGPT/Codex 订阅交互写入。
+
+`prepare-review` 和 `finalize-review` 都不会调用 OpenAI API，即使当前环境意外设置了 `OPENAI_API_KEY`。`finalize-review` 要求每个候选指纹恰好出现一次；缺失、重复、额外候选、日期不一致或额外 JSON 字段都会拒绝生成报告。重复导入相同分析是幂等的。
+
+仓库内的 `prompts/daily_codex_review.md` 是适合 Codex Scheduled Task 的固定执行说明。针对本地项目的定时任务必须在电脑开机且 ChatGPT/Codex 桌面应用保持运行时执行，并预先允许该项目访问 arXiv、Semantic Scholar 和配置的 RSS/Atom 域名。推荐使用 Local 模式，使私有 PDF 保留在主项目的 `reports/` 中。
+
+CLI 在省略 `--date` 时读取 `RADAR_TIMEZONE`，默认使用 `America/New_York`；可在本地环境中覆盖为其他 IANA 时区。定时任务因此可以使用固定的 `python -m cv_radar prepare-review` 与 `python -m cv_radar finalize-review` 命令。
+
+项目级 `.codex/rules/cv-radar.rules` 只允许 `prepare-review` 抓取入口在无人值守任务中访问网络，不会放行其他 Python、`cv_radar run` 或 Git 命令。首次添加或修改规则后重启一次 ChatGPT/Codex 桌面应用，使项目规则生效；项目需要处于受信任状态。
+
 离线验收不会发起任何网络请求：
 
 ```bash
@@ -68,7 +97,7 @@ python -m cv_radar run --date 2026-07-10 --fixture-dir tests/fixtures
 
 相同日期和相同输入重复执行时，日报覆盖为相同内容，状态按稳定键 upsert，不增加重复项目或运行记录。
 
-`reports/` 默认加入 `.gitignore`，其中的 Markdown 和 PDF 日报只保存在运行环境本地，不会被提交或发布到 GitHub。
+`reports/` 与 `review/` 默认加入 `.gitignore`。日报、候选材料和订阅生成的分析只保存在运行环境本地，不会被提交或发布到 GitHub。
 
 ## 配置示例
 

@@ -12,9 +12,18 @@ from pathlib import Path
 from cv_radar.analysis import KeywordAnalyzer, LLMAnalyzer
 from cv_radar.config import FeedConfig, ProjectConfig, load_project_config
 from cv_radar.http import ResilientHttpClient
-from cv_radar.models import ItemType, RankedItem, ResearchItem, RunRecord
+from cv_radar.manual_review import (
+    load_review_bundle,
+    load_review_submission,
+    review_paths,
+    validate_submission,
+    write_review_bundle,
+)
+from cv_radar.models import ItemType, RankedItem, ResearchItem, ReviewBundle, ReviewCandidate, RunRecord
 from cv_radar.pdf_reporting import write_pdf_report
 from cv_radar.processing import Deduplicator, RuleFilter
+from cv_radar.processing.dedupe import item_fingerprint
+from cv_radar.processing.filtering import RuleMatch
 from cv_radar.ranking import rank_items, select_daily_items
 from cv_radar.reporting import render_markdown_report, write_report
 from cv_radar.sources import ArxivSource, RSSSource, SemanticScholarClient, parse_arxiv_atom, parse_feed
@@ -31,6 +40,26 @@ class PipelineResult:
     items: list[RankedItem]
     fetched_count: int
     candidate_count: int
+    source_errors: list[str]
+
+
+@dataclass(slots=True)
+class ReviewPreparationResult:
+    target_date: date
+    bundle_path: Path
+    prompt_path: Path
+    analysis_path: Path
+    fetched_count: int
+    rule_candidate_count: int
+    review_candidate_count: int
+    source_errors: list[str]
+
+
+@dataclass(slots=True)
+class _CollectionResult:
+    fetched: list[ResearchItem]
+    deduplicated: list[ResearchItem]
+    matches: list[RuleMatch]
     source_errors: list[str]
 
 
@@ -110,8 +139,7 @@ class RadarPipeline:
             items = [scholar.enrich(item) if item.item_type == ItemType.PAPER else item for item in items]
         return items, errors
 
-    def run(self, target_date: date, *, fixture_dir: str | Path | None = None) -> PipelineResult:
-        started = datetime.now(UTC)
+    def _collect(self, target_date: date, fixture_dir: str | Path | None) -> _CollectionResult:
         if fixture_dir:
             fetched, source_errors = self._fetch_fixtures(Path(fixture_dir), target_date)
         else:
@@ -120,9 +148,181 @@ class RadarPipeline:
         matches = RuleFilter(
             self.config.interests, self.config.ranking.minimum_rule_score
         ).filter(deduplicated)
+        return _CollectionResult(
+            fetched=fetched,
+            deduplicated=deduplicated,
+            matches=matches,
+            source_errors=source_errors,
+        )
+
+    def _persist_result(
+        self,
+        target_date: date,
+        selected: list[RankedItem],
+        *,
+        started: datetime,
+        fetched_count: int,
+        candidate_count: int,
+        llm_enabled: bool,
+        source_errors: list[str],
+        seen_items: list[ResearchItem],
+    ) -> PipelineResult:
+        content = render_markdown_report(
+            target_date,
+            selected,
+            fetched_count=fetched_count,
+            candidate_count=candidate_count,
+            llm_enabled=llm_enabled,
+            source_errors=source_errors,
+        )
+        markdown_path = write_report(self.project_root / "reports", target_date, content)
+        report_path = write_pdf_report(
+            self.project_root / "reports",
+            target_date,
+            selected,
+            fetched_count=fetched_count,
+            candidate_count=candidate_count,
+            llm_enabled=llm_enabled,
+            source_errors=source_errors,
+        )
+        self.state.upsert_seen(seen_items)
+        finished = datetime.now(UTC)
+        self.state.upsert_run(
+            RunRecord(
+                run_key=f"daily:{target_date.isoformat()}",
+                target_date=target_date.isoformat(),
+                started_at=started,
+                finished_at=finished,
+                fetched_count=fetched_count,
+                candidate_count=candidate_count,
+                report_count=len(selected),
+                source_errors=source_errors,
+                llm_enabled=llm_enabled,
+                report_path=str(report_path.relative_to(self.project_root)),
+            )
+        )
+        return PipelineResult(
+            target_date=target_date,
+            report_path=report_path,
+            markdown_path=markdown_path,
+            items=selected,
+            fetched_count=fetched_count,
+            candidate_count=candidate_count,
+            source_errors=source_errors,
+        )
+
+    def prepare_review(
+        self,
+        target_date: date,
+        *,
+        fixture_dir: str | Path | None = None,
+    ) -> ReviewPreparationResult:
+        """Collect and export a bounded candidate set without calling an LLM API."""
+        collection = self._collect(target_date, fixture_dir)
+        keyword = KeywordAnalyzer(self.config.interests)
+        fallback_by_fingerprint = {
+            item_fingerprint(match.item): keyword.analyze(match) for match in collection.matches
+        }
+        fallback_ranked = rank_items(
+            [
+                (match.item, fallback_by_fingerprint[item_fingerprint(match.item)], False)
+                for match in collection.matches
+            ],
+            self.config.ranking,
+            self.config.interests,
+        )
+        review_items = select_daily_items(
+            fallback_ranked,
+            self.config.interests.daily_max_recommendations,
+            self.config.ranking.topic_daily_cap,
+        )
+        match_by_fingerprint = {
+            item_fingerprint(match.item): match for match in collection.matches
+        }
+        candidates = []
+        for ranked_item in review_items:
+            fingerprint = item_fingerprint(ranked_item.item)
+            match = match_by_fingerprint[fingerprint]
+            candidates.append(
+                ReviewCandidate(
+                    fingerprint=fingerprint,
+                    item=ranked_item.item,
+                    rule_score=match.score,
+                    rule_topics=match.topics,
+                    rule_reasons=match.reasons,
+                    fallback_analysis=fallback_by_fingerprint[fingerprint],
+                )
+            )
+        bundle = ReviewBundle(
+            target_date=target_date,
+            fetched_count=len(collection.fetched),
+            rule_candidate_count=len(collection.matches),
+            source_errors=collection.source_errors,
+            collected_items=collection.deduplicated,
+            candidates=candidates,
+        )
+        paths = write_review_bundle(self.project_root, bundle)
+        return ReviewPreparationResult(
+            target_date=target_date,
+            bundle_path=paths.bundle_path,
+            prompt_path=paths.prompt_path,
+            analysis_path=paths.analysis_path,
+            fetched_count=len(collection.fetched),
+            rule_candidate_count=len(collection.matches),
+            review_candidate_count=len(candidates),
+            source_errors=collection.source_errors,
+        )
+
+    def finalize_review(
+        self,
+        target_date: date,
+        *,
+        bundle_path: str | Path | None = None,
+        analysis_path: str | Path | None = None,
+    ) -> PipelineResult:
+        """Validate a subscription-generated review file and build final reports."""
+        started = datetime.now(UTC)
+        defaults = review_paths(self.project_root, target_date)
+        bundle = load_review_bundle(bundle_path or defaults.bundle_path)
+        submission = load_review_submission(analysis_path or defaults.analysis_path)
+        if bundle.target_date != target_date:
+            raise ValueError(
+                f"requested date {target_date.isoformat()} does not match bundle {bundle.target_date.isoformat()}"
+            )
+        validate_submission(bundle, submission)
+        analysis_by_fingerprint = {
+            entry.fingerprint: entry.analysis for entry in submission.analyses
+        }
+        ranked = rank_items(
+            [
+                (candidate.item, analysis_by_fingerprint[candidate.fingerprint], True)
+                for candidate in bundle.candidates
+            ],
+            self.config.ranking,
+            self.config.interests,
+        )
+        selected = select_daily_items(
+            ranked,
+            self.config.interests.daily_max_recommendations,
+            self.config.ranking.topic_daily_cap,
+        )
+        return self._persist_result(
+            target_date,
+            selected,
+            started=started,
+            fetched_count=bundle.fetched_count,
+            candidate_count=bundle.rule_candidate_count,
+            llm_enabled=bool(bundle.candidates),
+            source_errors=bundle.source_errors,
+            seen_items=bundle.collected_items,
+        )
+
+    def run(self, target_date: date, *, fixture_dir: str | Path | None = None) -> PipelineResult:
+        started = datetime.now(UTC)
+        collection = self._collect(target_date, fixture_dir)
         keyword = KeywordAnalyzer(self.config.interests)
         analyzed = []
-        for match in matches:
+        for match in collection.matches:
             fallback = keyword.analyze(match)
             analysis, used_llm = self.llm.analyze(match, fallback)
             analyzed.append((match.item, analysis, used_llm))
@@ -132,46 +332,13 @@ class RadarPipeline:
             self.config.interests.daily_max_recommendations,
             self.config.ranking.topic_daily_cap,
         )
-        content = render_markdown_report(
+        return self._persist_result(
             target_date,
             selected,
-            fetched_count=len(fetched),
-            candidate_count=len(matches),
+            started=started,
+            fetched_count=len(collection.fetched),
+            candidate_count=len(collection.matches),
             llm_enabled=self.llm.enabled,
-            source_errors=source_errors,
-        )
-        markdown_path = write_report(self.project_root / "reports", target_date, content)
-        report_path = write_pdf_report(
-            self.project_root / "reports",
-            target_date,
-            selected,
-            fetched_count=len(fetched),
-            candidate_count=len(matches),
-            llm_enabled=self.llm.enabled,
-            source_errors=source_errors,
-        )
-        self.state.upsert_seen(deduplicated)
-        finished = datetime.now(UTC)
-        self.state.upsert_run(
-            RunRecord(
-                run_key=f"daily:{target_date.isoformat()}",
-                target_date=target_date.isoformat(),
-                started_at=started,
-                finished_at=finished,
-                fetched_count=len(fetched),
-                candidate_count=len(matches),
-                report_count=len(selected),
-                source_errors=source_errors,
-                llm_enabled=self.llm.enabled,
-                report_path=str(report_path.relative_to(self.project_root)),
-            )
-        )
-        return PipelineResult(
-            target_date=target_date,
-            report_path=report_path,
-            markdown_path=markdown_path,
-            items=selected,
-            fetched_count=len(fetched),
-            candidate_count=len(matches),
-            source_errors=source_errors,
+            source_errors=collection.source_errors,
+            seen_items=collection.deduplicated,
         )

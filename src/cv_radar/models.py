@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class ItemType(str, Enum):
@@ -104,3 +104,61 @@ class RunRecord(BaseModel):
     source_errors: list[str] = Field(default_factory=list)
     llm_enabled: bool
     report_path: str
+
+
+class ReviewCandidate(BaseModel):
+    """One rule-filtered item prepared for a subscription-based manual review."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    fingerprint: str
+    item: ResearchItem
+    rule_score: float = Field(ge=0, le=100)
+    rule_topics: list[str] = Field(default_factory=list)
+    rule_reasons: list[str] = Field(default_factory=list)
+    fallback_analysis: LLMAnalysis
+
+
+class ReviewBundle(BaseModel):
+    """Deterministic hand-off from collection to ChatGPT/Codex review."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1] = 1
+    target_date: date
+    fetched_count: int = Field(ge=0)
+    rule_candidate_count: int = Field(ge=0)
+    source_errors: list[str] = Field(default_factory=list)
+    collected_items: list[ResearchItem] = Field(default_factory=list)
+    candidates: list[ReviewCandidate] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def unique_candidate_fingerprints(self) -> "ReviewBundle":
+        fingerprints = [candidate.fingerprint for candidate in self.candidates]
+        if len(fingerprints) != len(set(fingerprints)):
+            raise ValueError("review candidates must have unique fingerprints")
+        return self
+
+
+class ReviewAnalysisEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    fingerprint: str
+    analysis: LLMAnalysis
+
+
+class ReviewSubmission(BaseModel):
+    """Strict file written by ChatGPT/Codex and imported without an API call."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1] = 1
+    target_date: date
+    analyses: list[ReviewAnalysisEntry] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def unique_analysis_fingerprints(self) -> "ReviewSubmission":
+        fingerprints = [entry.fingerprint for entry in self.analyses]
+        if len(fingerprints) != len(set(fingerprints)):
+            raise ValueError("review analyses must have unique fingerprints")
+        return self
