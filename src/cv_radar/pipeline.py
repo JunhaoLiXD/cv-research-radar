@@ -19,7 +19,15 @@ from cv_radar.manual_review import (
     validate_submission,
     write_review_bundle,
 )
-from cv_radar.models import ItemType, RankedItem, ResearchItem, ReviewBundle, ReviewCandidate, RunRecord
+from cv_radar.models import (
+    ItemType,
+    RankedItem,
+    RecommendedAction,
+    ResearchItem,
+    ReviewBundle,
+    ReviewCandidate,
+    RunRecord,
+)
 from cv_radar.pdf_reporting import write_pdf_report
 from cv_radar.processing import Deduplicator, RuleFilter
 from cv_radar.processing.dedupe import item_fingerprint
@@ -35,8 +43,8 @@ logger = logging.getLogger(__name__)
 @dataclass(slots=True)
 class PipelineResult:
     target_date: date
-    report_path: Path
-    markdown_path: Path
+    report_path: Path | None
+    markdown_path: Path | None
     items: list[RankedItem]
     fetched_count: int
     candidate_count: int
@@ -167,24 +175,27 @@ class RadarPipeline:
         source_errors: list[str],
         seen_items: list[ResearchItem],
     ) -> PipelineResult:
-        content = render_markdown_report(
-            target_date,
-            selected,
-            fetched_count=fetched_count,
-            candidate_count=candidate_count,
-            llm_enabled=llm_enabled,
-            source_errors=source_errors,
-        )
-        markdown_path = write_report(self.project_root / "reports", target_date, content)
-        report_path = write_pdf_report(
-            self.project_root / "reports",
-            target_date,
-            selected,
-            fetched_count=fetched_count,
-            candidate_count=candidate_count,
-            llm_enabled=llm_enabled,
-            source_errors=source_errors,
-        )
+        markdown_path: Path | None = None
+        report_path: Path | None = None
+        if selected:
+            content = render_markdown_report(
+                target_date,
+                selected,
+                fetched_count=fetched_count,
+                candidate_count=candidate_count,
+                llm_enabled=llm_enabled,
+                source_errors=source_errors,
+            )
+            markdown_path = write_report(self.project_root / "reports", target_date, content)
+            report_path = write_pdf_report(
+                self.project_root / "reports",
+                target_date,
+                selected,
+                fetched_count=fetched_count,
+                candidate_count=candidate_count,
+                llm_enabled=llm_enabled,
+                source_errors=source_errors,
+            )
         self.state.upsert_seen(seen_items)
         finished = datetime.now(UTC)
         self.state.upsert_run(
@@ -198,7 +209,11 @@ class RadarPipeline:
                 report_count=len(selected),
                 source_errors=source_errors,
                 llm_enabled=llm_enabled,
-                report_path=str(report_path.relative_to(self.project_root)),
+                report_path=(
+                    str(report_path.relative_to(self.project_root))
+                    if report_path is not None
+                    else None
+                ),
             )
         )
         return PipelineResult(
@@ -302,7 +317,11 @@ class RadarPipeline:
             self.config.interests,
         )
         selected = select_daily_items(
-            ranked,
+            [
+                item
+                for item in ranked
+                if item.analysis.recommended_action != RecommendedAction.SKIP
+            ],
             self.config.interests.daily_max_recommendations,
             self.config.ranking.topic_daily_cap,
         )
@@ -328,7 +347,11 @@ class RadarPipeline:
             analyzed.append((match.item, analysis, used_llm))
         ranked = rank_items(analyzed, self.config.ranking, self.config.interests)
         selected = select_daily_items(
-            ranked,
+            [
+                item
+                for item in ranked
+                if item.analysis.recommended_action != RecommendedAction.SKIP
+            ],
             self.config.interests.daily_max_recommendations,
             self.config.ranking.topic_daily_cap,
         )

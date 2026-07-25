@@ -103,7 +103,7 @@ class RunRecord(BaseModel):
     report_count: int = Field(ge=0)
     source_errors: list[str] = Field(default_factory=list)
     llm_enabled: bool
-    report_path: str
+    report_path: str | None = None
 
 
 class ReviewCandidate(BaseModel):

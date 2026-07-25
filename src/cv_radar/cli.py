@@ -48,9 +48,11 @@ def _run_one(target: date, root: Path, config_dir: Path, fixture_dir: Path | Non
         result = pipeline.run(target, fixture_dir=fixture_dir)
     finally:
         pipeline.close()
+    report_status = result.report_path if result.report_path is not None else "unchanged"
     typer.echo(
         f"{target.isoformat()}: fetched={result.fetched_count}, candidates={result.candidate_count}, "
-        f"recommended={len(result.items)}, report={result.report_path}"
+        f"recommended={len(result.items)}, report_updated={result.report_path is not None}, "
+        f"report={report_status}"
     )
     for error in result.source_errors:
         typer.echo(f"warning: {error}", err=True)
@@ -128,10 +130,17 @@ def finalize_review_command(
         )
     finally:
         pipeline.close()
-    typer.echo(
-        f"{target.isoformat()}: candidates={result.candidate_count}, "
-        f"recommended={len(result.items)}, markdown={result.markdown_path}, pdf={result.report_path}"
-    )
+    if result.report_path is None:
+        typer.echo(
+            f"{target.isoformat()}: candidates={result.candidate_count}, recommended=0, "
+            "report_updated=false, markdown=unchanged, pdf=unchanged"
+        )
+    else:
+        typer.echo(
+            f"{target.isoformat()}: candidates={result.candidate_count}, "
+            f"recommended={len(result.items)}, report_updated=true, "
+            f"markdown={result.markdown_path}, pdf={result.report_path}"
+        )
 
 
 @app.command()

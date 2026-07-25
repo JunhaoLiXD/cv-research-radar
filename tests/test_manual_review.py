@@ -1,3 +1,4 @@
+import json
 from datetime import date
 from pathlib import Path
 
@@ -7,7 +8,7 @@ from pydantic import ValidationError
 from cv_radar.analysis.llm import LLMAnalyzer
 from cv_radar.config import load_project_config
 from cv_radar.manual_review import load_review_bundle, write_review_submission
-from cv_radar.models import ReviewAnalysisEntry, ReviewSubmission
+from cv_radar.models import RecommendedAction, ReviewAnalysisEntry, ReviewSubmission
 from cv_radar.pipeline import RadarPipeline
 
 
@@ -93,6 +94,53 @@ def test_finalize_rejects_missing_candidate_analysis(tmp_path: Path) -> None:
 
     assert not (tmp_path / "reports").exists()
     assert not (tmp_path / "state").exists()
+
+
+def test_finalize_with_only_skipped_items_preserves_latest_reports(tmp_path: Path) -> None:
+    pipeline = _pipeline(tmp_path)
+    reports_dir = tmp_path / "reports"
+    reports_dir.mkdir()
+    previous_markdown = b"# previous useful report\n"
+    previous_pdf = b"%PDF-previous-useful-report\n"
+    (reports_dir / "latest.md").write_bytes(previous_markdown)
+    (reports_dir / "latest.pdf").write_bytes(previous_pdf)
+
+    prepared = pipeline.prepare_review(TARGET, fixture_dir=FIXTURES)
+    bundle = load_review_bundle(prepared.bundle_path)
+    submission = _submission_for(bundle)
+    skipped_entries = [
+        entry.model_copy(
+            update={
+                "analysis": entry.analysis.model_copy(
+                    update={"recommended_action": RecommendedAction.SKIP}
+                )
+            }
+        )
+        for entry in submission.analyses
+    ]
+    write_review_submission(
+        prepared.analysis_path,
+        submission.model_copy(update={"analyses": skipped_entries}),
+    )
+
+    first = pipeline.finalize_review(TARGET)
+    first_runs = (tmp_path / "state" / "runs.jsonl").read_bytes()
+    second = pipeline.finalize_review(TARGET)
+    pipeline.close()
+
+    assert first.items == []
+    assert first.markdown_path is None
+    assert first.report_path is None
+    assert second.markdown_path is None
+    assert second.report_path is None
+    assert not (reports_dir / f"{TARGET.isoformat()}.md").exists()
+    assert not (reports_dir / f"{TARGET.isoformat()}.pdf").exists()
+    assert (reports_dir / "latest.md").read_bytes() == previous_markdown
+    assert (reports_dir / "latest.pdf").read_bytes() == previous_pdf
+    assert (tmp_path / "state" / "runs.jsonl").read_bytes() == first_runs
+    run_record = json.loads(first_runs.decode("utf-8"))
+    assert run_record["report_count"] == 0
+    assert run_record["report_path"] is None
 
 
 def test_review_submission_schema_is_strict() -> None:

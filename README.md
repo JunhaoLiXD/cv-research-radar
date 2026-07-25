@@ -92,7 +92,8 @@ python -m cv_radar prepare-review --date 2026-07-10
 # 2. Ask Codex to follow review/2026-07-10-prompt.md and write the strict
 #    JSON result to review/2026-07-10-analysis.json.
 
-# 3. Validate the analysis, rerank candidates, and generate Markdown/PDF.
+# 3. Validate the analysis, rerank candidates, and generate Markdown/PDF
+#    only when at least one item is worth recommending.
 python -m cv_radar finalize-review --date 2026-07-10
 ```
 
@@ -102,7 +103,7 @@ python -m cv_radar finalize-review --date 2026-07-10
 - `review/YYYY-MM-DD-prompt.md`: safety boundaries, analysis instructions, and the strict JSON Schema;
 - an expected output path at `review/YYYY-MM-DD-analysis.json`.
 
-Both `prepare-review` and `finalize-review` hard-disable the API analyzer even if `OPENAI_API_KEY` is present. `finalize-review` rejects missing, duplicate, unexpected, wrong-date, or schema-invalid analyses. Reimporting the same valid analysis is idempotent.
+Both `prepare-review` and `finalize-review` hard-disable the API analyzer even if `OPENAI_API_KEY` is present. `finalize-review` rejects missing, duplicate, unexpected, wrong-date, or schema-invalid analyses. Items marked `跳过` are excluded from the daily selection. If none remain, the run is recorded but no dated report is created and `reports/latest.*` remains unchanged. Reimporting the same valid analysis is idempotent.
 
 Each reviewed item contains a Chinese overview, concrete highlights, a novelty or noteworthy-aspect explanation, the core idea, why it matters, limitations, connections to configured research interests, code availability, and a recommended action: intensive reading, skim, watch, or skip.
 
@@ -136,7 +137,7 @@ Local Scheduled tasks use the ChatGPT/Codex subscription and count against the p
 
 ## Reports and state
 
-Successful runs produce:
+Runs with at least one recommendation produce:
 
 ```text
 reports/YYYY-MM-DD.md
@@ -147,7 +148,7 @@ state/seen_items.jsonl
 state/runs.jsonl
 ```
 
-Markdown and PDF reports contain the same recommendations. Repeating a run for the same date and input overwrites the report deterministically and upserts state by stable keys instead of appending duplicate items or run records.
+Runs with no recommendation still update state but do not create an empty dated report or replace `reports/latest.*`. Markdown and PDF reports contain the same recommendations. Repeating a run for the same date and input overwrites the report deterministically and upserts state by stable keys instead of appending duplicate items or run records.
 
 `reports/` and `review/` are ignored by Git. Private reports, candidate bundles, and subscription-generated analyses stay on the local machine and are never committed or published by the provided workflow.
 

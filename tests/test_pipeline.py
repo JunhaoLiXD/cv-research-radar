@@ -35,7 +35,8 @@ def test_same_day_fixture_run_is_idempotent(tmp_path: Path) -> None:
     assert (tmp_path / "state" / "runs.jsonl").read_bytes() == first_run_state
     assert len(seen_lines) == 4
     assert len(run_lines) == 1
-    assert len(second.items) == 4
+    assert len(second.items) == 3
+    assert all(item.analysis.recommended_action.value != "跳过" for item in second.items)
     assert all(item.analysis.summary_zh for item in second.items)
     assert all(item.analysis.highlights_zh for item in second.items)
     assert all(item.analysis.novelty_zh for item in second.items)
